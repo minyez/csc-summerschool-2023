@@ -1,0 +1,12 @@
+Here contains my code snippets for CSC summer school 2023 in Finland.
+
+The main directory for the school: [[https://github.com/csc-training/summerschool][csc-training/summerschool]].
+
+* Daily notes
+- [[file:day-1][Day 1: 2023-06-27]]
+- [[file:day-2][Day 2: 2023-06-28]]
+- [[file:day-3][Day 3: 2023-06-29]]
+- [[file:day-4][Day 4: 2023-06-30]]
+
+* [[file:./LICENSE][License]]
+MIT for my own code, and GPL for the codes from the csc-training repository.
