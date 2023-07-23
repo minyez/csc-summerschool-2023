@@ -1,0 +1,11 @@
+#+title: Notes of Day 10
+
+* Application design
+CPU: ownership semantics
+
+GPU malloc:
+- preallocate for worst case
+- Double buffering: [[https://www.geeksforgeeks.org/double-buffering/][GeeksforGeeks]]
+
+* Documenting and testing
+~on: workflow_dispatch~: manual trigger

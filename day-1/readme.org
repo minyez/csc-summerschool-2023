@@ -1,0 +1,128 @@
+#+title: Notes of First day
+
+* Briefing
+Send lightning talk slide to tuosmas.lunitta@csc
+
+Main message for the talk:
+1. Name, Institute
+2. Material science, experiments and atomistic simulation
+3. DFT and many-body perturbation theory
+4. Logos: CAS, FHI, NOMAD, FHI-aims, ABACUS
+5. HPC stuff: running big systems
+
+* Intro to LUMI
+(My own search) meaning of Finnish words:
+1. Lumi: snow
+2. Mahti: power
+3. Puhti: energy
+
+一个 LUMI 项目训练芬兰语语言模型，遍历了全网所有的芬兰语语料。
+中文语料很难做到，因为很多内容被屏蔽删除了。
+
+PUE: power usage efficiency
+\begin{equation}
+\mathrm {PUE} ={{\mbox{Total Facility Energy}} \over {\mbox{IT Equipment Energy}}}=1+{{\mbox{Non IT Facility Energy}} \over {\mbox{IT Equipment Energy}}}
+\end{equation}
+The lower the PUE, the better the system is.
+
+LUMI-G
+- 1 AMD Trento processor (CPU): 64-core, 512 GB DDR4
+- 4 [[https://www.techpowerup.com/gpu-specs/radeon-instinct-mi250x.c3837][MI250X]] (GPU): 2021 Q4, 14080 cores and 128 GB each
+
+* Intro to supercomputing
+Power consumption of CPU: \(f^3\) (third order to frequency on a single core)
+
+Parallelism on lower level:
+- vectoriazation: SIMD
+- instruction level parallelism
+- pipelining
+
+Main difference from university cluster to tier-0 (top 10 in the world) supercomputer center:
+the number of nodes (also more capable interconnections in high end systems)
+
+Cloud computing:
+- infrastructure run on top of normal HPC
+- User obtains virtual machines (or possibly bare metal instances)
+- Two types
+  - Infrastructure as a service (IaaS): user has full freedom of OS and software environment
+  - Platform as a service (PaaS): user develops and runs software within the provided environment
+
+Cloud computing and HPC, which is more suitable?
+- virtualization (in CC) adds overhead especially for the networking
+- bare metal with high-speed interconnects can provide similar performance as cluster
+- moving data out from the cloud can be time-consuming
+- cost-effectiveness of cloud depends heavily on use case.
+
+Containers
+- overhead v.s. CC?
+
+Post-exascale challenges
+- power consumption
+- cost&maintaining: chip shortage
+- application scalability
+
+* Parallel computing
+Lecturer: Jussi Enkovaara
+
+Types of parallel
+1. tightly coupled
+   - lots of interaction between subtasks: weather simulation
+   - low latency, high speed interconnect is essential
+2. embarrassingly parallel
+   - very little (or no) interaction between subtasks: sequence alignment queries in bioinformatics
+
+Exposing parallelism
+- data
+  - distributed across cores
+  - each core performs simultaneously identical operations with different data
+  - one core interact with others
+- task farm (master/worker)
+  - master sends tasks to and gets results from workers
+  - usually more master than workers
+
+Strong parallel scaling:
+- constant problem size
+
+Weak parallel scaling:
+- increasing problem size
+
+Hands-on parallel efficiency:
+summing up 20 numbers, 1s for addition and 0.1s for communication
+| nproc | time | speedup | para. eff. |
+|-------+------+---------+------------|
+|     1 |   19 |    1.00 |      1.000 |
+|     2 | 10.1 |    1.88 |      0.940 |
+|     4 |  6.2 |    3.06 |      0.765 |
+|     8 |  5.3 |    3.58 |      0.448 |
+#+tblfm: $3=19/$2;%.2f::$4=$3/$1;%.3f
+
+summing up 1020 numbers
+| nproc |  time | speedup | para. eff. |
+|-------+-------+---------+------------|
+|     1 |  1019 |    1.00 |      1.000 |
+|     2 | 510.1 |    2.00 |      1.000 |
+|     4 | 256.2 |    3.98 |      0.995 |
+|     8 | 130.3 |    7.82 |      0.978 |
+#+tblfm: $3=1019/$2;%.2f::$4=$3/$1;%.3f
+
+In shared-memory MPI, processes still need to communicate.
+
+Threads v.s. processes:
+- Within 1 node, threads is not always preferred: threads creation/merging, race condition ...
+- On LUMI-C (128 cores), it is usually good to use 4 threads with 32 processes to maximize performance
+
+Showcase of a hydrodynamics problem: moving a ball in a 2D (xz) waterpool.
+- Parallelization: add boundary of the pool, each process for the dynamics of water particles in its pool.
+- Dynamic load balancing: the boundary moves dynamically, i.e. the number of particles of each pool changes.
+
+Running MPI jobs with ~mpirun~ is prohibited on LUMI login. ALWAYS ~srun~.
+
+Shared memory communicator
+#+begin_src cpp :eval never
+MPI_Comm intranode_comm;
+
+MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0,
+                    MPI_INFO_NULL, &intranode_comm);
+#+end_src
+
+LUMI always exclusive node.

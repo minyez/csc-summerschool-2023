@@ -1,0 +1,232 @@
+#+title: Notes of Day 4
+
+* Parallel I/O
+** Overview
+Problem in parallel I/O
+- Mapping problem: how to convert internal structures and domains to files
+- Transport problem: how to get the data efficiently from hundreds to thousands of nodes on supercomputer to disk
+
+Good I/O. Cannot achieve all in one, need prioritize
+- Performance, scalability, reliability
+- Ease of use of output
+- Portability
+
+Challenges
+- Quickly increasing number of tasks
+- Data size
+- Disparity of computing powers vs. I/O performance is getting worse
+
+Lustre
+#+begin_src shell :eval never
+touch testfile
+lfs getstripe testfile
+mkdir s24
+lfs setstripe -c 24 s24/
+cd s24
+touch testfile
+lfs getstripe testfile
+#+end_src
+
+Data striping to increase I/O performance when doing parallel I/O.
+We don't have on HR.
+
+** Parallel POSIX I/O strategies
+- Spokesman strategy: collect all data on master process
+- Everyone on his own: each process writes his own data file
+
+** HDF5
+Hyperslab
+
+Dataspace
+#+begin_src c :eval never
+
+#+end_src
+
+Dataset creation and write to file
+#+begin_src c :eval never
+// H5Dcreate is a macro, H5Dcreate2 is one
+hid_t H5Dcreate2(hid_t loc_id,
+                 const char *name,
+                 hid_t type_id,
+                 hid_t space_id,
+                 hid_t lcpl_id,
+                 hid_t dcpl_id,
+                 hid_t dapl_id
+);
+
+herr_t H5Dwrite(hid_t dset_id,
+                hid_t mem_type_id,
+                hid_t mem_space_id,
+                hid_t file_space_id,
+                hid_t dxpl_id,
+                const void *  buf
+);
+#+end_src
+
+* Hybrid programming
+Advantage
+- fewer MPI processes for a given amount of cores
+  - improved load balance
+  - alleviate all-to-all communication bottlenecks
+  - decreased memory consumption if implementation uses replicated data
+- Additional parallelization levels
+- Possibility for dedicating threads (e.g. to communicator or parallel IO)
+- Dynamic parallelization patterns often easier to implement
+
+Disadvantage
+- Overhead from thread creation/destruction
+- More complicated programming: code readability and maintainability
+- need to consider thread support in MPI and other libraries
+
+* OpenMP
+Components
+- Compiler directives
+- Runtime library routines
+- Environment variables: thread affinity, ...
+
+Clock timing on LUMI.
+
+| ENV        | meaning                                       |
+|------------+-----------------------------------------------|
+| ~OMP_PLACES~ | specify the bindings between threads and CPUs |
+
+#+begin_src cpp :eval never
+#ifdef _OPENMP
+#else
+#endif
+#+end_src
+
+Variables defined outside OpenMP block are shared in the block.
+#+begin_src cpp :eval never
+#pragma omp parallel private(var1)
+#+end_src
+
+** Exercise: data-sharing
+#+begin_src cpp :results value code :wrap src :eval never
+#include <cstdio>
+
+int main(void)
+{
+    int var1 = 1, var2 = 2;
+
+    // either of
+    // #pragma omp parallel shared(var1,var2)
+    // #pragma omp parallel private(var1,var2)
+    // #pragma omp parallel firstprivate(var1,var2)
+    {
+        printf("Region 1: var1=%i, var2=%i\n", var1, var2);
+        var1++;
+        var2++;
+    }
+    printf("After region 1: var1=%i, var2=%i\n\n", var1, var2);
+
+    return 0;
+}
+#+end_src
+
+shared (run with 4 threads)
+#+begin_src
+Region 1: var1=1, var2=2
+Region 1: var1=1, var2=2
+Region 1: var1=1, var2=2
+Region 1: var1=1, var2=2
+After region 1: var1=5, var2=6
+#+end_src
+
+private
+#+begin_src
+Thread  0 Region 1: var1=-1, var2=-832
+Thread  1 Region 1: var1=0, var2=0
+Thread  2 Region 1: var1=0, var2=0
+Thread  3 Region 1: var1=0, var2=0
+After region 1: var1=1, var2=2
+#+end_src
+The values are uninitialized.
+On a different machine, some rediculous values can appear
+#+begin_src
+Thread  0 Region 1: var1=0, var2=0
+Thread  1 Region 1: var1=-445218815, var2=49988208
+Thread  2 Region 1: var1=-1660059647, var2=49988208
+Thread  3 Region 1: var1=0, var2=0
+#+end_src
+
+firstprivate
+#+begin_src
+Thread  3 Region 1: var1=1, var2=2
+Thread  2 Region 1: var1=1, var2=2
+Thread  0 Region 1: var1=1, var2=2
+Thread  1 Region 1: var1=1, var2=2
+After region 1: var1=1, var2=2
+#+end_src
+
+** Exercise: race-condition
+Without reduction
+#+begin_src cpp :eval never
+#pragma omp parallel for
+#+end_src
+Result is random. The more threads, the more severe race condition is,
+the smaller is the sum.
+| nthread | Sum till 102400 (med in 5) | Ratio of exact |
+|---------+----------------------------+----------------|
+|       1 |                 5242931200 |          1.000 |
+|       2 |                 3538016864 |          0.675 |
+|       4 |                 1286611824 |          0.245 |
+|       8 |                  564543086 |          0.108 |
+|      16 |                  334725185 |          0.064 |
+|      32 |                  256555511 |          0.049 |
+|      64 |                  194825350 |          0.037 |
+#+tblfm: $3=$2/5242931200;%.3f
+
+** Exercise: reduction
+Using reduction
+#+begin_src cpp :eval never
+#define NX 102400
+#pragma omp parallel for reduction(+:sum) shared(vecA) private(i)
+for (i = 0; i < NX; i++) {
+    sum += vecA[i];
+}
+#+end_src
+
+Using partial sum and critical
+#+begin_src cpp :eval never
+#pragma omp parallel default(shared) private(psum)
+{
+    double psum = 0.0;
+    #pragma omp for private(i)
+    for (i = 0; i < NX; i++) {
+        psum += vecA[i];
+    }
+    #pragma omp critical(par_sum)
+    sum += psum;
+}
+#+end_src
+Basically, only one thread can process critical block at the same time.
+~par_sum~ is a name for this critical part.
+Critical part with the same name can only be accessed by one thread at the same time.
+
+** Exercise: execution-controls
+使用 single 的位置
+1. 文件读取 ~read_file(b)~, 避免在 cin 时冲突，数据为所有进程必须
+2. 涉及内存分配和释放的操作，包括构造、复制，交换 ~swap~.
+3. 初始化 norm. 重复初始化会导致已计算部分损失。
+
+需要在开始新一轮 do 循环前 barrier, 否则某个较快的线程在进入下一个循环中重置了 norm,
+而较慢的线程刚刚结束一轮，进入 norm 和 eps 比对，那么较慢的线程就会跳出循环。
+去掉 barrier, 程序会在 ite 0 后卡住，或者报错退出，而不是运行时间变长。
+一个理解是因为在 omp for 后有 implicit barrier, 而线程离开 do loop 后就无法到达该 barrier,
+从而卡住。
+
+| nthread |  iter |   end norm |   wtime | speedup | para. eff |
+|---------+-------+------------+---------+---------+-----------|
+|       1 | 22760 | 0.00499884 | 69.3792 |   1.000 |     1.000 |
+|       2 | 22760 | 0.00499884 |  36.442 |   1.904 |     0.952 |
+|       4 | 22760 | 0.00499884 |  18.398 |   3.771 |     0.943 |
+|       8 | 22760 | 0.00499884 | 9.55187 |   7.263 |     0.908 |
+|      16 | 22760 | 0.00499884 |   5.341 |  12.990 |     0.812 |
+|      32 | 22760 | 0.00499884 | 3.43547 |  20.195 |     0.631 |
+|      64 | 22760 | 0.00499884 | 2.73474 |  25.370 |     0.396 |
+#+tblfm: $5=@2$4/$4;%.3f::$6=$5/$1;%.3f
+
+* Exercise: Heat equation 2D
+初始化时需要根据格点多少修改 ~ParallelData~ 的 row/col datatype,
+因此相关函数和方法的 ~const ParallelData~ 参数需要修改为 ~ParallelData&~.

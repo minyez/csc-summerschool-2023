@@ -1,0 +1,96 @@
+#+title: Notes of Day 9
+
+* Quantum computing
+Main point: qubits can represent any state between 0 and 1 by control.
+
+Problem suitable for quantum computer: find best answer in large solution space
+
+Quality of qubits:
+- maintenance of coherent quantum state
+- resolution of superposition phase
+
+Quantum computer running temperature: ~10 mK
+
+Universe background radiation: 2.6 K
+
+In classical computing however, logical operations can be irreversible, e.g. OR.
+In quantum computing, all logical operations must be reversible.
+
+Entanglement operator: Hadamard + CNOT
+** Hands-on: simple quantum program
+#+begin_src python :eval never
+from qat.lang.AQASM import Program, H
+
+# setup a quantum program
+FirstQProg = Program()
+qbits = FirstQProg.qalloc(1)
+# apply Hadamard
+FirstQProg.apply(H, qbits[0])
+
+# convert to quantum circuit
+FirstQCircuit = FirstQProg.to_circ()
+
+# in Jupyter
+# %qatdisplay FirstQCircuit
+# as a function
+# from qat.core.console import display
+# display(FirstQCircuit)
+
+# Create a job to run on QPU, show collective results
+Job1 = FirstQCircuit.to_job(nbshots=5, aggregate_data=True)
+
+# Submit job to a simulated QPU
+from qat.pylinalg import PyLinalg
+ExampleQPU = PyLinalg()
+Result1 = ExampleQPU.submit(Job1)
+for sample in Result2:
+    print("state:", sample.state, "probability:", sample.probability)
+#+end_src
+
+Separate measurement
+#+begin_src python :eval never
+# Create a job where we disable the aggregation of measurement outcomes
+Job3 = FirstQCircuit.to_job(nbshots=10, aggregate_data=False)
+
+# Submit to the QPU
+Result3 = ExampleQPU.submit(Job3)
+
+# Print out all measured results
+for sample in Result3:
+    print("We measured the state", sample.state, sample.probability)
+#+end_src
+
+** Hands-on: create EPR pair
+Applying Hadamard then CNOT
+#+begin_src python :eval never
+from qat.lang.AQASM import Program, H, CNOT
+from qat.pylinalg import PyLinalg
+prog.apply(H, qubits[0])
+prog.apply(CNOT, qubits[0], qubits[1])
+circ = prog.to_circ()
+
+job = circ.to_job(nbshots=16, aggregate_data=False)
+result = qpu.submit(job)
+for sample in result:
+    print("We measured the state", sample.state, sample.amplitude, sample.probability)
+#+end_src
+
+Got
+#+begin_src
+We measured the state |00> None None
+We measured the state |00> None None
+We measured the state |11> None None
+We measured the state |00> None None
+We measured the state |11> None None
+We measured the state |11> None None
+We measured the state |11> None None
+We measured the state |00> None None
+We measured the state |00> None None
+We measured the state |11> None None
+We measured the state |00> None None
+We measured the state |11> None None
+We measured the state |11> None None
+We measured the state |00> None None
+We measured the state |11> None None
+We measured the state |00> None None
+#+end_src

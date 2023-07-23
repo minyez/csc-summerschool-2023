@@ -1,0 +1,330 @@
+#+title: Notes of Day 7
+
+* HIP overview
+Most basic API
+| function          |
+|-------------------|
+| ~hipGetDeviceCount~ |
+| ~hipGetDevice~      |
+
+Kernel: a function to be executed on the GPU.
+Needs to be declared ~void~ and ~__global__~, and are launched with
+~hipLaunchKernelGGL()~ or chevron ~<<< >>>~.
+
+#+begin_src cpp :results value code :wrap src :eval never
+/* HIP error handling macro */
+#define HIP_ERRCHK(err) (hip_errchk(err, __FILE__, __LINE__ ))
+static inline void hip_errchk(hipError_t err, const char *file, int line) {
+    if (err != hipSuccess) {
+        printf("\n\n%s in %s at line %d\n", hipGetErrorString(err), file, line);
+        exit(EXIT_FAILURE);
+    }
+}
+#+end_src
+
+Call the kernel
+#+begin_src cpp :results value code :wrap src :eval never
+dim3 blocks(32);
+dim3 threads(256);
+
+hipLaunchKernelGGL(somekernel, blocks, threads, 0, 0, ...)
+somekernel<<<blocks, threads, 0, 0>>>(...)
+#+end_src
+
+Thread hierarchy: 3D grid
+- Grid > blocks > threads
+- Threads are partitioned into equal-sized blocks
+- Code is executed by the threads, the grid is just a way to organize the work
+- Dimension of the grid are set at kernel launch, blocks and threads are parsed as arguments.
+
+* HIP event, stream, synchronization
+Events: ~hipEvent_t~ type, actually a pointer to an internal ~ihipEvent_t~ type
+#+begin_src cpp :results value code :wrap src :eval never
+// in hip_runtime.h
+typedef struct ihipEvent_t* hipEvent_t;
+// ihipEvent_h in src/hip_hcc_internal.h
+#+end_src
+
+#+begin_src cpp :results value code :wrap src :eval never
+hipEvent_t start_event, stop_event;
+hipEventCreate(&start_event);
+hipEventCreate(&stop_event);
+
+hipEventRecord(start_event, stream = 0);
+// do something
+hipEventRecord(stop_event, stream = 0);
+
+hipEventDestroy(start_event);
+hipEventDestroy(stop_event);
+
+float elapsed;
+hipEventElapsedTime(&elapsed, start_event, stop_event);
+#+end_src
+
+Stream: for asynchronous computation
+#+begin_src cpp :results value code :wrap src :eval never
+hipStreamCreate(hipStream_t *strm);
+// synchronize stream to block host until stream is finished
+// This ensures the correct result and event recording
+hipStreamSynchronize(stream);
+#+end_src
+
+** Exercise: stream
+Points:
+- use ~hipMemcpyAsync~ instead of ~hipMemcpy~
+- parse stream identifier to kernel
+- grid size (number of blocks in a grid) is divided by number of streams
+
+#+begin_src
+Case 0 - Duration for sequential transfers+kernel (max error = 5.960464e-08):
+  total time:     7.329776 ms
+Case 1 - Duration for asynchronous kernels (max error = 5.960464e-08):
+  stream[0] time: 2.438725 ms
+  stream[1] time: 2.834567 ms
+  stream[2] time: 2.877766 ms
+  stream[3] time: 0.443201 ms
+  total time:     7.379376 ms
+Case 2 - Duration for asynchronous transfers+kernels (max error = 5.960464e-08):
+  stream[0] time: 0.411681 ms
+  stream[1] time: 0.408481 ms
+  stream[2] time: 0.410881 ms
+  stream[3] time: 0.399681 ms
+  total time:     0.576001 ms
+Case 3 - Duration for asynchronous transfers+kernels (max error = 5.960464e-08):
+  stream[0] time: 0.309761 ms
+  stream[1] time: 0.315361 ms
+  stream[2] time: 0.321121 ms
+  stream[3] time: 0.326081 ms
+  total time:     0.383201 ms
+#+end_src
+
+* HIP data management
+Avoid ~hipMalloc~, consider worst case and reuse the allocated array by ~hipMemcpy~.
+
+Device memory hierarchy:
+- register (per-thread, very fast)
+- shared memory (per-block, fast)
+- local memory (per-thread, very slow)
+- global memory (per-device, very slow)
+
+~hipMallocAsync~ needs a string suffix for ordering calls.
+
+** Exercise: memory-prefetch
+*** API
+#+begin_src cpp :results value code :wrap src :eval never
+hipError_t hipMemPrefetchAsync(const void* dev_ptr,
+                               size_t count,
+                               int device,
+                               hipStream_t stream __dparm(0));
+#define hipCpuDeviceId ((int)-1);
+#+end_src
+
+*** Solution
+Explicit memory management, ~memcpy~ between host/device
+#+begin_src cpp :results value code :wrap src :eval never
+A = new int [size];
+hipMalloc(&d_A, size);
+for (int i = 0; i < nsteps; i++)
+{
+    memset(A, 0, size);
+    hipMemcpy(d_A, A, size, hipMemcpyHostToDevice);
+    hipLaunchKernelGGL(kernel, gridsize, blocksize, 0, 0, d_A, size);
+    hipStreamSynchronize(0);
+}
+hipMemcpy(A, d_A, size, hipMemcpyDeviceToHost);
+// results check for A
+hipFree(d_A);
+delete [] A;
+#+end_src
+
+Explicit memory management, ~memcpy~ between host/device, pinned host allocation
+#+begin_src cpp :results value code :wrap src :eval never
+hipHostMalloc(&A, size);
+hipMalloc(&d_A, size);
+for (int i = 0; i < nsteps; i++)
+{
+    memset(A, 0, size);
+    hipMemcpy(d_A, A, size, hipMemcpyHostToDevice);
+    hipLaunchKernelGGL(kernel, gridsize, blocksize, 0, 0, d_A, size);
+    hipStreamSynchronize(0);
+}
+hipMemcpy(A, d_A, size, hipMemcpyDeviceToHost);
+// results check for A
+hipFree(d_A);
+hipHostFree(A);
+#+end_src
+
+Explicit memory management, no ~memcpy~ from host to device
+#+begin_src cpp :results value code :wrap src :eval never
+A = new int [size];
+hipMalloc(&d_A, size);
+for (int i = 0; i < nsteps; i++)
+{
+    hipMemset(d_A, 0, size);
+    hipLaunchKernelGGL(kernel, gridsize, blocksize, 0, 0, d_A, size);
+    hipStreamSynchronize(0);
+}
+hipMemcpy(A, d_A, size, hipMemcpyDeviceToHost);
+// results check for A
+hipFree(d_A);
+delete [] A;
+#+end_src
+
+Unified memory management, without prefetching
+#+begin_src cpp :results value code :wrap src :eval never
+hipMallocManaged(&A, size);
+for (int i = 0; i < nsteps; i++)
+{
+    memset(A, 0, size);
+    hipLaunchKernelGGL(kernel, gridsize, blocksize, 0, 0, A, size);
+    hipStreamSynchronize(0);
+}
+// results check for A
+hipFree(A);
+#+end_src
+
+Unified memory management, with prefetching
+#+begin_src cpp :results value code :wrap src :eval never
+hipMallocManaged(&A, size);
+for (int i = 0; i < nsteps; i++)
+{
+    memset(A, 0, size);
+    hipMemPrefetchAsync(A, size, device, 0);
+    hipLaunchKernelGGL(kernel, gridsize, blocksize, 0, 0, A, size);
+    hipStreamSynchronize(0);
+}
+hipMemPrefetchAsync(A, size, hipCpuDeviceId, 0);
+hipStreamSynchronize(0);
+// results check for A
+hipFree(A);
+#+end_src
+
+Unified memory management, without memcopies
+#+begin_src cpp :results value code :wrap src :eval never
+hipMallocManaged(&A, size);
+for (int i = 0; i < nsteps; i++)
+{
+    hipMemset(A, 0, size);
+    hipLaunchKernelGGL(kernel, gridsize, blocksize, 0, 0, A, size);
+}
+hipMemPrefetchAsync(A, size, hipCpuDeviceId, 0);
+hipStreamSynchronize(0);
+// results check for A
+hipFree(d_A);
+#+end_src
+
+Run with single GPU
+#+begin_src
+The results are OK! (1.659s - ExplicitMemCopy)
+The results are OK! (1.252s - ExplicitMemPinnedCopy)
+The results are OK! (0.857s - ExplicitMemNoCopy)
+The results are OK! (1.054s - UnifiedMemNoPrefetch)
+The results are OK! (4.279s - UnifiedMemPrefetch)
+The results are OK! (1.035s - UnifiedMemNoCopy)
+#+end_src
+
+*** DONE Question
+- Why use prefetch in ~UnifiedPrefetch~?
+  It adds more instructions to previous example,
+  and in this case only significantly increase the time.
+- When should one use prefetch?
+
+Effect of ~PrefetchAsync~ is compiler dependent (Emmanuel).
+~PrefetchAsync~ is supposed to increase the efficiency,
+but not in this case.
+With NVIDIA GPU on Puhti (from Jaro), it works perfectly.
+#+begin_src
+The results are OK! (2.164s - ExplicitMemCopy)
+The results are OK! (1.427s - ExplicitMemPinnedCopy)
+The results are OK! (0.071s - ExplicitMemNoCopy)
+The results are OK! (3.087s - UnifiedMemNoPrefetch)
+The results are OK! (2.132s - UnifiedMemPrefetch)
+The results are OK! (0.077s - UnifiedMemNoCopy)
+#+end_src
+
+** Exercise: memory-struct
+Helper functions to create/release device objects.
+
+*** DONE Question
+In solution there seem to be many redundant ~memcpy~.
+My solution without local pointer is fine.
+
+** Exercise: memory-performance
+Coalesced/uncoalesced access in the code
+#+begin_src cpp :results value code :wrap src :eval never
+template < bool coalesced >
+__global__ void hipKernel(const int* const A, const int size, const int* const B, int* const C)
+{
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  const int num_workers = blockDim.x * gridDim.x;
+  if constexpr (coalesced)
+  {
+    for (int i = idx; i < size; i += num_workers)
+      C[i] = A[i] + B[i];
+  }
+  else
+  {
+    const int num_points_per_thread = size/num_workers;
+    const int num_thread_with_extra_point = size%num_workers;
+    const int my_start = idx < num_thread_with_extra_point ?
+                         idx * (num_points_per_thread + 1)
+                         : num_thread_with_extra_point * (num_points_per_thread+1) + (idx-num_thread_with_extra_point) *num_points_per_thread;
+    const int my_end = idx < num_thread_with_extra_point ?
+                       my_start + num_points_per_thread + 1
+                       : my_start + num_points_per_thread;
+    for(int i = my_start; i < my_end; ++i)
+      C[i] = A[i] + B[i];
+  }
+}
+#+end_src
+合并和非合并访问。从给出的例子可以看出，合并访问时每个 GPU 线程获取的数组 index
+按照 workers 数递进，而 workers 数等于每个 grid 的 blocks 数 (~gridDim.x~) 乘以每个
+block 的线程数 (~blockDim.x~).
+
+Given solution, with grid size equal to 64
+#+begin_src
+coalesced accesses:
+7963.224 ms - noRecurringAlloc
+14198.403 ms - recurringAllocNoMemPools
+14060.136 ms - recurringAllocMallocAsync
+uncoalesced accesses:
+9043.018 ms - noRecurringAlloc
+14848.244 ms - recurringAllocNoMemPools
+14276.564 ms - recurringAllocMallocAsync
+#+end_src
+My solution with grid size equal to ~(size - 1 + blocksize)/blocksize~
+#+begin_src
+8654.476 ms - noRecurringAlloc
+15583.028 ms - recurringAllocNoMemPools
+14323.803 ms - recurringAllocMallocAsync
+uncoalesced accesses:
+9496.717 ms - noRecurringAlloc
+16849.123 ms - recurringAllocNoMemPools
+15594.108 ms - recurringAllocMallocAsync
+#+end_src
+My solution with grid size equal to 64
+#+begin_src
+coalesced accesses:
+7972.207 ms - noRecurringAlloc
+14194.645 ms - recurringAllocNoMemPools
+13129.905 ms - recurringAllocMallocAsync
+uncoalesced accesses:
+9063.241 ms - noRecurringAlloc
+14660.646 ms - recurringAllocNoMemPools
+13907.682 ms - recurringAllocMallocAsync
+#+end_src
+As expected, coalesced access is faster than uncoalesced access.
+With ~MallocAsync~ it is supposed to be faster and close to ~noRecurringAlloc~.
+This could be related to the relately new feature of ~MallocAsync~ in HIP.
+
+With NVIDIA GPU on Puhti (from Jaro)
+#+begin_src
+coalesced accesses:
+1050.213 ms - noRecurringAlloc
+5938.985 ms - recurringAllocNoMemPools
+1067.786 ms - recurringAllocMallocAsync
+uncoalesced accesses:
+1324.570 ms - noRecurringAlloc
+6165.069 ms - recurringAllocNoMemPools
+1331.998 ms - recurringAllocMallocAsync
+#+end_src

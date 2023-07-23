@@ -1,0 +1,732 @@
+#+title: Notes of Day 6
+
+* GPU programming
+CPU and GPU have completely different design philosophy:
+- CPU has good instruction flow control
+- GPU has bad flow control, but highly parallelized
+
+Heterogeneous programming model
+- GPU as co-processors to CPU
+- CPU still in control of the work flow
+- CPU and GPU can work concurrently (also asynchronously)
+
+Using GPU
+- directive based methods: OpenMP, OpenACC.
+  - focus on optimizing productivity
+  - reasonable performance with quite limited effort, but not guaranteed
+- native GPU language: CUDA, HIP.
+* OpenMP offloading (intro and work-sharing)
+What is?
+- set of OpenMP constructs for heterogenous systems
+- code regions offloaded from the host (CPU) on an accelerator
+
+OpenMP vs OpenACC.
+- both directive based
+- OpenACC is open standard, driven by NVIDIA
+- OpenACC support on AMD GPU is limited
+
+** Run on LUMI
+#+begin_src shell :eval never
+mizhang@uan02:~/.local/bin> srung rocm-smi
+srun --account=project_465000536 --partition=dev-g --nodes=1 --ntasks-per-node=1 --cpus-per-task=1 --time=00:05:00 --gpus-per-node=1 rocm-smi
+
+
+======================= ROCm System Management Interface =======================
+================================= Concise Info =================================
+GPU  Temp   AvgPwr  SCLK    MCLK     Fan  Perf  PwrCap  VRAM%  GPU%
+0    47.0c  94.0W   800Mhz  1600Mhz  0%   auto  560.0W    0%   0%
+================================================================================
+============================= End of ROCm SMI Log ==============================
+mizhang@uan02:~/.local/bin> srung -g 8 rocm-smi
+srun --account=project_465000536 --partition=dev-g --nodes=1 --ntasks-per-node=1 --cpus-per-task=1 --time=00:05:00 --gpus-per-node=8 rocm-smi
+
+
+======================= ROCm System Management Interface =======================
+================================= Concise Info =================================
+GPU  Temp   AvgPwr  SCLK    MCLK     Fan  Perf  PwrCap  VRAM%  GPU%
+0    45.0c  89.0W   800Mhz  1600Mhz  0%   auto  560.0W    0%   0%
+1    47.0c  N/A     800Mhz  1600Mhz  0%   auto  0.0W      0%   0%
+2    45.0c  90.0W   800Mhz  1600Mhz  0%   auto  560.0W    0%   0%
+3    46.0c  N/A     800Mhz  1600Mhz  0%   auto  0.0W      0%   0%
+4    42.0c  86.0W   800Mhz  1600Mhz  0%   auto  560.0W    0%   0%
+5    46.0c  N/A     800Mhz  1600Mhz  0%   auto  0.0W      0%   0%
+6    43.0c  87.0W   800Mhz  1600Mhz  0%   auto  560.0W    0%   0%
+7    45.0c  N/A     800Mhz  1600Mhz  0%   auto  0.0W      0%   0%
+================================================================================
+============================= End of ROCm SMI Log ==============================
+#+end_src
+
+** Exercise: hello-world
+*** Fortran
+Compile using CPU
+#+begin_src shell :eval never
+module load hpcss/cpu
+ftn hello.F90 -o hello -fopenmp
+#+end_src
+and run on CPU node
+#+begin_src shell :eval never
+mizhang@uan02:/scratch/project_465000536/mizhang/summerschool/gpu-openmp/hello-world> srunwrapper -p 4 ./hello
+srun --account=project_465000536 --partition=small --nodes=1 --ntasks-per-node=4 --cpus-per-task=4 --time=00:05:00 --label ./hello
+srun: job 3851295 queued and waiting for resources
+srun: job 3851295 has been allocated resources
+ Number of available devices 1
+ Running on device
+ Number of available devices 1
+ Running on device
+ Number of available devices 1
+ Running on device
+ Number of available devices 1
+ Running on device
+#+end_src
+run on GPU node
+#+begin_src shell :eval never
+mizhang@uan02:/scratch/project_465000536/mizhang/summerschool/gpu-openmp/hello-world> srung -g 2 ./hello
+srun --account=project_465000536 --partition=dev-g --nodes=1 --ntasks-per-node=1 --cpus-per-task=1 --time=00:05:00 --gpus-per-node=2 ./hello
+srun: job 3851450 queued and waiting for resources
+srun: job 3851450 has been allocated resources
+ Number of available devices 1
+ Running on device
+#+end_src
+
+Compile using GPU
+#+begin_src shell :eval never
+module load hpcss/gpu
+ftn hello.F90 -o hello -fopenmp
+#+end_src
+Run on CPU node
+#+begin_src shell :eval never
+mizhang@uan02:/scratch/project_465000536/mizhang/summerschool/gpu-openmp/hello-world> srunwrapper -p 2 -n 1 ./hello
+srun --account=project_465000536 --partition=small --nodes=1 --ntasks-per-node=1 --cpus-per-task=2 --time=00:05:00 --label ./hello
+srun: job 3851354 queued and waiting for resources
+srun: job 3851354 has been allocated resources
+0: ACC: libcrayacc/acc_hw_amd.c:525 CRAY_ACC_ERROR -  hipInit returned hipErrorInvalidDevice: 'invalid device ordinal'
+srun: error: nid002083: task 0: Exited with exit code 1
+srun: launch/slurm: _step_signal: Terminating StepId=3851354.0
+#+end_src
+Run on GPU node
+#+begin_src shell :eval never
+mizhang@uan02:/scratch/project_465000536/mizhang/summerschool/gpu-openmp/hello-world> srung -g 2 ./hello
+srun --account=project_465000536 --partition=dev-g --nodes=1 --ntasks-per-node=1 --cpus-per-task=1 --time=00:05:00 --gpus-per-node=2 ./hello
+srun: job 3851346 queued and waiting for resources
+srun: job 3851346 has been allocated resources
+ Number of available devices 2
+ Running on device
+#+end_src
+
+*** C
+Compile using CPU
+#+begin_src shell :eval never
+module load hpcss/cpu
+cc hello.c -o hello -fopenmp
+#+end_src
+Run with CPU node
+#+begin_src shell :eval never
+mizhang@uan02:/scratch/project_465000536/mizhang/summerschool/gpu-openmp/hello-world> srunwrapper -n 1 ./hello
+srun --account=project_465000536 --partition=small --nodes=1 --ntasks-per-node=1 --cpus-per-task=1 --time=00:05:00 --label ./hello
+srun: job 3851470 queued and waiting for resources
+srun: job 3851470 has been allocated resources
+0: Number of available devices 0
+0: Running on host
+#+end_src
+
+Run with GPU node
+#+begin_src shell :eval never
+mizhang@uan02:/scratch/project_465000536/mizhang/summerschool/gpu-openmp/hello-world> srung -n 1 -g 2 ./hello
+srun --account=project_465000536 --partition=dev-g --nodes=1 --ntasks-per-node=1 --cpus-per-task=1 --time=00:05:00 --gpus-per-node=2 ./hello
+srun: job 3851483 queued and waiting for resources
+srun: job 3851483 has been allocated resources
+Number of available devices 0
+#+end_src
+
+Compile using GPU
+#+begin_src shell :eval never
+module load hpcss/gpu
+cc hello.c -o hello -fopenmp
+#+end_src
+Run with CPU node
+#+begin_src shell :eval never
+mizhang@uan02:/scratch/project_465000536/mizhang/summerschool/gpu-openmp/hello-world> srunwrapper -p 2 -n 1 ./hello
+srun --account=project_465000536 --partition=small --nodes=1 --ntasks-per-node=1 --cpus-per-task=2 --time=00:05:00 --label ./hello
+srun: job 3851539 queued and waiting for resources
+srun: job 3851539 has been allocated resources
+0: ACC: libcrayacc/acc_hw_amd.c:525 CRAY_ACC_ERROR -  hipInit returned hipErrorInvalidDevice: 'invalid device ordinal'
+srun: error: nid002083: task 0: Exited with exit code 1
+srun: launch/slurm: _step_signal: Terminating StepId=3851539.0
+#+end_src
+Run with GPU node
+#+begin_src shell :eval never
+mizhang@uan02:/scratch/project_465000536/mizhang/summerschool/gpu-openmp/hello-world> srung -g 2 ./hello
+srun --account=project_465000536 --partition=dev-g --nodes=1 --ntasks-per-node=1 --cpus-per-task=1 --time=00:05:00 --gpus-per-node=2 ./hello
+srun: job 3851509 queued and waiting for resources
+srun: job 3851509 has been allocated resources
+Number of available devices 2
+Running on device
+#+end_src
+** Exercise: vector-sum
+*** C code
+#+begin_src cpp :eval never -n 17
+#pragma omp target teams
+#pragma omp distribute parallel for
+for (int i = 0; i < NX; i++) {
+    vecC[i] = vecA[i] + vecB[i];
+}
+#+end_src
+
+**** Compiler diagnostics
+With C compiler ~-fsave-loopmark~. Compiling gives lst file.
+The main concerned part looks like this
+#+begin_src
+Legend:
+
+  A - recognized idiom
+  D - deleted loop
+  I - callee inlined here
+  L - interleaved loop
+  M - multithreaded
+  P - peeled loop
+  S - distributed loop
+  U - completely unrolled loop
+  u - partially unrolled loop
+  V - vectorized loop
+  X - loop interchanged with enclosing loop
+  Z - versioned loop for LICM
+  + - additional messages below
+...
+17.   I       #pragma omp target teams
+18.   I 0--<> #pragma omp distribute parallel for
+19. +   M---<     for (int i = 0; i < NX; i++) {
+20.     M             vecC[i] = vecA[i] + vecB[i];
+21.     M--->     }
+#+end_src
+
+**** Output with different ~CRAY_ACC_DEBUG~.
+Set ~CRAY_ACC_DEBUG~ to 1.
+#+begin_src
+ACC: Transfer 3 items (to acc 2457600 bytes, to host 0 bytes) from sum.c:17
+ACC: Execute kernel __omp_offloading_eeba6730_6b01a650_main_l17_cce$noloop$form from sum.c:17
+ACC: Transfer 3 items (to acc 0 bytes, to host 2457600 bytes) from sum.c:17
+Reduction sum: 13.7587868405645448
+#+end_src
+Set ~CRAY_ACC_DEBUG~ to 2.
+#+begin_src
+ACC: Version 5.0 of HIP already initialized, runtime version 50322062
+ACC: Get Device 0
+ACC: Set Thread Context
+ACC: Start transfer 3 items from sum.c:17
+ACC:       allocate, copy to acc 'vecC' (819200 bytes)
+ACC:       allocate, copy to acc 'vecA' (819200 bytes)
+ACC:       allocate, copy to acc 'vecB' (819200 bytes)
+ACC: End transfer (to acc 2457600 bytes, to host 0 bytes)
+ACC: Execute kernel __omp_offloading_eeba6730_6b01a650_main_l17_cce$noloop$form blocks:400 threads:256 from sum.c:17
+ACC: Start transfer 3 items from sum.c:17
+ACC:       copy to host, free 'vecB' (819200 bytes)
+ACC:       copy to host, free 'vecA' (819200 bytes)
+ACC:       copy to host, free 'vecC' (819200 bytes)
+ACC: End transfer (to acc 0 bytes, to host 2457600 bytes)
+Reduction sum: 13.7587868405645448
+#+end_src
+Set ~CRAY_ACC_DEBUG~ to 3.
+#+begin_src
+ACC: __tgt_register_requires: flags = NONE
+ACC: __tgt_register_lib
+ACC:   NumDeviceImages=1
+ACC:   Device Images:
+ACC:   Image location: 0x200c98 - 0x204b20
+ACC:   Processing valid image
+ACC:   NumEntries=1
+ACC:   Image entries:
+ACC:   __omp_offloading_eeba6730_6b01a650_main_l17
+ACC:     {
+ACC:         addr=0x200bc8
+ACC:         size=0
+ACC:         flags=0
+ACC:     }
+ACC:   NumHostEntries=1
+ACC:   Host entries:
+ACC:   __omp_offloading_eeba6730_6b01a650_main_l17
+ACC:     {
+ACC:         addr=0x200bc8
+ACC:         size=0
+ACC:         flags=0
+ACC:     }
+ACC: __tgt_target_kernel(device_id=-1, host_ptr=0x200bc8, arg_num=3)
+ACC: __internal_tgt_target_teams(device_id=-1, host_ptr=0x200bc8, arg_num=3, num_teams=0, thread_limit=0)
+ACC: Version 5.0 of HIP already initialized, runtime version 50322062
+ACC: Get Device 0
+ACC: Compute level 9.0
+ACC: Device Name:
+ACC: Number of cus 110
+ACC: Device name
+ACC: AMD GCN arch name: gfx90a:sramecc+:xnack-
+ACC: Max shared memory 65536
+ACC: Max thread blocks per cu 8
+ACC: Max concurrent kernels 8
+ACC: Async table size 8
+ACC: Set Thread Context
+ACC: Establish link bewteen libcrayacc and libcraymp
+ACC:   libcrayacc interface v5
+ACC:    libcraymp interface v5
+ACC:    loading module data
+ACC: __internal_tgt_target_teams(device_id=-1, host_ptr=0x200bc8, arg_num=3, num_teams=400, thread_limit=256)
+ACC:   [0] 0x7ffeee11cfa0 base 0x7ffeee11cfa0 begin 0x7ffeee11cfa0 : 819200 bytes type=0x223 (TO FROM TARGET_PARAM IMPLICIT) name (vecC)
+ACC:   [1] 0x7ffeee2acfa0 base 0x7ffeee2acfa0 begin 0x7ffeee2acfa0 : 819200 bytes type=0x223 (TO FROM TARGET_PARAM IMPLICIT) name (vecA)
+ACC:   [2] 0x7ffeee1e4fa0 base 0x7ffeee1e4fa0 begin 0x7ffeee1e4fa0 : 819200 bytes type=0x223 (TO FROM TARGET_PARAM IMPLICIT) name (vecB)
+ACC: Start transfer 3 items from sum.c:17
+ACC:   flags:
+ACC:
+ACC:   Trans 1
+ACC:       Simple transfer of 'vecC' (819200 bytes)
+ACC:            host ptr 7ffeee11cfa0
+ACC:            acc  ptr 0
+ACC:            flags: ALLOCATE COPY_HOST_TO_ACC ACQ_PRESENT REG_PRESENT
+ACC:            memory not found in present table
+ACC:            allocate (819200 bytes)
+ACC:              get new reusable memory, added entry
+ACC:            new allocated ptr (14de3f200000)
+ACC:            add to present table index 0: host 7ffeee11cfa0 to 7ffeee1e4fa0, acc 14de3f200000
+ACC:            copy host to acc (7ffeee11cfa0 to 14de3f200000)
+ACC:                internal copy host to acc (host 7ffeee11cfa0 to acc 14de3f200000) size = 819200
+ACC:            new acc ptr 14de3f200000
+ACC:
+ACC:   Trans 2
+ACC:       Simple transfer of 'vecA' (819200 bytes)
+ACC:            host ptr 7ffeee2acfa0
+ACC:            acc  ptr 0
+ACC:            flags: ALLOCATE COPY_HOST_TO_ACC ACQ_PRESENT REG_PRESENT
+ACC:            memory not found in present table
+ACC:            allocate (819200 bytes)
+ACC:              get new reusable memory, added entry
+ACC:            new allocated ptr (14de3f2c8000)
+ACC:            add to present table index 1: host 7ffeee2acfa0 to 7ffeee374fa0, acc 14de3f2c8000
+ACC:            copy host to acc (7ffeee2acfa0 to 14de3f2c8000)
+ACC:                internal copy host to acc (host 7ffeee2acfa0 to acc 14de3f2c8000) size = 819200
+ACC:            new acc ptr 14de3f2c8000
+ACC:
+ACC:   Trans 3
+ACC:       Simple transfer of 'vecB' (819200 bytes)
+ACC:            host ptr 7ffeee1e4fa0
+ACC:            acc  ptr 0
+ACC:            flags: ALLOCATE COPY_HOST_TO_ACC ACQ_PRESENT REG_PRESENT
+ACC:            memory not found in present table
+ACC:            allocate (819200 bytes)
+ACC:              get new reusable memory, added entry
+ACC:            new allocated ptr (14de3a800000)
+ACC:            add to present table index 2: host 7ffeee1e4fa0 to 7ffeee2acfa0, acc 14de3a800000
+ACC:            copy host to acc (7ffeee1e4fa0 to 14de3a800000)
+ACC:                internal copy host to acc (host 7ffeee1e4fa0 to acc 14de3a800000) size = 819200
+ACC:            new acc ptr 14de3a800000
+ACC:
+ACC: End transfer (to acc 2457600 bytes, to host 0 bytes)
+ACC:
+ACC: Kernel Arguments
+ACC: 0: 22944774356992 ptr 0x14de3f200000 (offset=0)
+ACC: 1: 22944775176192 ptr 0x14de3f2c8000 (offset=0)
+ACC: 2: 22944696762368 ptr 0x14de3a800000 (offset=0)
+ACC: Start kernel __omp_offloading_eeba6730_6b01a650_main_l17_cce$noloop$form from sum.c:17
+ACC:        flags: CACHE_MOD CACHE_FUNC
+ACC:    mod cache:  0x308c48
+ACC: kernel cache:  0x308cd8
+ACC:   async info:  (nil)
+ACC:    arguments: GPU argument info
+ACC:            param size:  24
+ACC:         param pointer:  0x414a80
+ACC:       blocks:  400
+ACC:      threads:  256
+ACC:     event id:  0
+ACC:    using cached module
+ACC:    getting function __omp_offloading_eeba6730_6b01a650_main_l17_cce$noloop$form
+ACC:       stats threads=1024 threadblocks per cu=4 shared=0 total shared=0
+ACC:       prefer equal shared memory and L1 cache
+ACC:     kernel information
+ACC:               num registers :       51
+ACC:        max theads per block :     1024
+ACC:                 shared size :        0 bytes
+ACC:                  const size :        0 bytes
+ACC:                  local size :      256 bytes
+ACC:
+ACC:     launching kernel new
+ACC:     synchronize
+ACC:     caching function
+ACC: End kernel
+ACC:
+ACC:   [0] 0x7ffeee1e4fa0 base 0x7ffeee1e4fa0 begin 0x7ffeee1e4fa0 : 819200 bytes type=0x223 (TO FROM TARGET_PARAM IMPLICIT) name (vecB)
+ACC:   [1] 0x7ffeee2acfa0 base 0x7ffeee2acfa0 begin 0x7ffeee2acfa0 : 819200 bytes type=0x223 (TO FROM TARGET_PARAM IMPLICIT) name (vecA)
+ACC:   [2] 0x7ffeee11cfa0 base 0x7ffeee11cfa0 begin 0x7ffeee11cfa0 : 819200 bytes type=0x223 (TO FROM TARGET_PARAM IMPLICIT) name (vecC)
+ACC: Start transfer 3 items from sum.c:17
+ACC:   flags:
+ACC:
+ACC:   Trans 1
+ACC:       Simple transfer of 'vecB' (819200 bytes)
+ACC:            host ptr 7ffeee1e4fa0
+ACC:            acc  ptr 0
+ACC:            flags: COPY_ACC_TO_HOST FREE REL_PRESENT REG_PRESENT INIT_ACC_PTR IGNORE_ABSENT
+ACC:            host region 7ffeee1e4fa0 to 7ffeee2acfa0 found in present table index 2 (ref count 1)
+ACC:            last release acc 14de3a800000 from present table index 2 (ref_count 1)
+ACC:            last release of conditional present (acc 14de3a800000, base 14de3a800000)
+ACC:            copy acc to host (14de3a800000 to 7ffeee1e4fa0)
+ACC:                interal copy acc to host (acc 14de3a800000 to host 7ffeee1e4fa0) size = 819200
+ACC:            remove acc 14de3a800000 from present table index 2
+ACC:            new acc ptr 0
+ACC:
+ACC:   Trans 2
+ACC:       Simple transfer of 'vecA' (819200 bytes)
+ACC:            host ptr 7ffeee2acfa0
+ACC:            acc  ptr 0
+ACC:            flags: COPY_ACC_TO_HOST FREE REL_PRESENT REG_PRESENT INIT_ACC_PTR IGNORE_ABSENT
+ACC:            host region 7ffeee2acfa0 to 7ffeee374fa0 found in present table index 1 (ref count 1)
+ACC:            last release acc 14de3f2c8000 from present table index 1 (ref_count 1)
+ACC:            last release of conditional present (acc 14de3f2c8000, base 14de3f2c8000)
+ACC:            copy acc to host (14de3f2c8000 to 7ffeee2acfa0)
+ACC:                interal copy acc to host (acc 14de3f2c8000 to host 7ffeee2acfa0) size = 819200
+ACC:            remove acc 14de3f2c8000 from present table index 1
+ACC:            new acc ptr 0
+ACC:
+ACC:   Trans 3
+ACC:       Simple transfer of 'vecC' (819200 bytes)
+ACC:            host ptr 7ffeee11cfa0
+ACC:            acc  ptr 0
+ACC:            flags: COPY_ACC_TO_HOST FREE REL_PRESENT REG_PRESENT INIT_ACC_PTR IGNORE_ABSENT
+ACC:            host region 7ffeee11cfa0 to 7ffeee1e4fa0 found in present table index 0 (ref count 1)
+ACC:            last release acc 14de3f200000 from present table index 0 (ref_count 1)
+ACC:            last release of conditional present (acc 14de3f200000, base 14de3f200000)
+ACC:            copy acc to host (14de3f200000 to 7ffeee11cfa0)
+ACC:                interal copy acc to host (acc 14de3f200000 to host 7ffeee11cfa0) size = 819200
+ACC:            remove acc 14de3f200000 from present table index 0
+ACC:            new acc ptr 0
+ACC:
+ACC: End transfer (to acc 0 bytes, to host 2457600 bytes)
+ACC:
+ACC: __tgt_unregister_lib
+ACC: Start executing pending desctructors
+Reduction sum: 13.7587868405645448
+#+end_src
+
+*** Fortran code
+Version 1
+#+begin_src fortran :eval never -n 19
+!$omp target teams distribute parallel do
+    do i = 1, nx
+        vecC(i) = vecA(i) + vecB(i);
+    end do
+!$omp end target teams distribute parallel do
+#+end_src
+Diagnostics option: ~-hmsgs -hlist=m~.
+In output
+#+begin_src
+  do i = 1, nx
+ftn-6005 ftn: SCALAR VECTORSUM, File = sum.F90, Line = 12
+  A loop starting at line 12 was unrolled 2 times.
+ftn-6204 ftn: VECTOR VECTORSUM, File = sum.F90, Line = 12
+  A loop starting at line 12 was vectorized.
+
+!$omp target teams distribute parallel do
+ftn-6405 ftn: ACCEL VECTORSUM, File = sum.F90, Line = 19
+  A region starting at line 19 and ending at line 23 was placed on the accelerator.
+ftn-6823 ftn: THREAD VECTORSUM, File = sum.F90, Line = 19
+  A region starting at line 19 and ending at line 23 was multi-threaded.
+ftn-6418 ftn: ACCEL VECTORSUM, File = sum.F90, Line = 19
+  If not already present: allocate memory and copy whole array "vecb" to accelerator, free at line 23 (acc_copyin).
+ftn-6418 ftn: ACCEL VECTORSUM, File = sum.F90, Line = 19
+  If not already present: allocate memory and copy whole array "veca" to accelerator, free at line 23 (acc_copyin).
+ftn-6416 ftn: ACCEL VECTORSUM, File = sum.F90, Line = 19
+  If not already present: allocate memory and copy whole array "vecc" to accelerator, copy back at line 23 (acc_copy).
+ftn-6823 ftn: THREAD VECTORSUM, File = sum.F90, Line = 19
+  A region starting at line 19 and ending at line 23 was multi-threaded.
+ftn-6823 ftn: THREAD VECTORSUM, File = sum.F90, Line = 19
+  A region starting at line 19 and ending at line 23 was multi-threaded.
+ftn-7256 ftn: WARNING VECTORSUM, File = sum.F90, Line = 19
+   An OpenMP parallel construct in a target region is limited to a single thread.
+
+    do i = 1, nx
+ftn-6005 ftn: SCALAR VECTORSUM, File = sum.F90, Line = 20
+  A loop starting at line 20 was unrolled 2 times.
+ftn-6430 ftn: ACCEL VECTORSUM, File = sum.F90, Line = 20
+  A loop starting at line 20 was partitioned across the threadblocks and the 256 threads within a threadblock.
+
+Cray Fortran : Version 15.0.1 (20230120205242_66f7391d6a03cf932f321b9f6b1d8612ef5f362c)
+Cray Fortran : Sun Jul 02, 2023  13:48:01
+Cray Fortran : Compile time:  0.1638 seconds
+Cray Fortran : 28 source lines
+Cray Fortran : 0 errors, 1 warnings, 11 other messages, 0 ansi
+Cray Fortran : "explain ftn-message number" gives more information about each message.
+#+end_src
+One warning, saying that target region is limited to a single thread.
+
+Version 2
+#+begin_src fortran :eval never -n 19
+!$omp target teams distribute simd
+    do i = 1, nx
+        vecC(i) = vecA(i) + vecB(i);
+    end do
+!$omp end target teams distribute simd
+#+end_src
+Diagonstics output
+#+begin_src
+  do i = 1, nx
+ftn-6005 ftn: SCALAR VECTORSUM, File = sum.F90, Line = 12
+  A loop starting at line 12 was unrolled 2 times.
+ftn-6204 ftn: VECTOR VECTORSUM, File = sum.F90, Line = 12
+  A loop starting at line 12 was vectorized.
+
+!$omp target teams distribute simd
+ftn-6405 ftn: ACCEL VECTORSUM, File = sum.F90, Line = 19
+  A region starting at line 19 and ending at line 23 was placed on the accelerator.
+ftn-6823 ftn: THREAD VECTORSUM, File = sum.F90, Line = 19
+  A region starting at line 19 and ending at line 23 was multi-threaded.
+ftn-6418 ftn: ACCEL VECTORSUM, File = sum.F90, Line = 19
+  If not already present: allocate memory and copy whole array "vecb" to accelerator, free at line 23 (acc_copyin).
+ftn-6418 ftn: ACCEL VECTORSUM, File = sum.F90, Line = 19
+  If not already present: allocate memory and copy whole array "veca" to accelerator, free at line 23 (acc_copyin).
+ftn-6416 ftn: ACCEL VECTORSUM, File = sum.F90, Line = 19
+  If not already present: allocate memory and copy whole array "vecc" to accelerator, copy back at line 23 (acc_copy).
+ftn-6823 ftn: THREAD VECTORSUM, File = sum.F90, Line = 19
+  A region starting at line 19 and ending at line 23 was multi-threaded.
+
+    do i = 1, nx
+ftn-6005 ftn: SCALAR VECTORSUM, File = sum.F90, Line = 20
+  A loop starting at line 20 was unrolled 2 times.
+ftn-6430 ftn: ACCEL VECTORSUM, File = sum.F90, Line = 20
+  A loop starting at line 20 was partitioned across the threadblocks and the 256 threads within a threadblock.
+
+Cray Fortran : Version 15.0.1 (20230120205242_66f7391d6a03cf932f321b9f6b1d8612ef5f362c)
+Cray Fortran : Sun Jul 02, 2023  13:41:54
+Cray Fortran : Compile time:  0.1516 seconds
+Cray Fortran : 28 source lines
+Cray Fortran : 0 errors, 0 warnings, 10 other messages, 0 ansi
+#+end_src
+No warnings now.
+** Exercise: jacobi
+*** Version 1
+#+begin_src f90 :eval never
+! Iterate
+do iter = 1, niter
+!$omp target teams distribute simd
+  do j = 2, ny - 1
+    do i = 2, nx - 1
+      unew(i, j) = factor * (u(i + 1, j) - 2.0 * u(i, j) + u(i - 1, j) + &
+                             u(i, j + 1) - 2.0 * u(i, j) + u(i, j - 1))
+    end do
+  end do
+!$omp end target teams distribute simd
+
+!$omp target teams distribute simd
+  do j = 2, ny - 1
+    do i = 2, nx - 1
+      u(i, j) = factor * (unew(i + 1, j) - 2.0 * unew(i, j) + unew(i - 1, j) + &
+                          unew(i, j + 1) - 2.0 * unew(i, j) + unew(i, j - 1))
+    end do
+  end do
+!$omp end target teams distribute simd
+end do
+#+end_src
+Serial CPU run
+#+begin_src
+ u(1,1) =  1000.
+ Time spent:  2.8741604230017401
+#+end_src
+GPU run
+#+begin_src
+ u(1,1) =  1000.
+ Time spent:  9.2458475632593036
+#+end_src
+
+*** TODO Version 2
+
+* Data movement
+** Exercise: dot-product
+*** Version 1
+#+begin_src f90 :eval never
+  res = 0.0
+!$omp target data map(to:vecA,vecB)
+!$omp target teams distribute simd reduction(+:res)
+  do i = 1, nx
+     res = res + vecA(i) * vecB(i)
+  end do
+!$omp end target teams distribute simd
+!$omp end target data
+#+end_src
+
+Diagnostics
+#+begin_src
+  do i = 1, nx
+ftn-6005 ftn: SCALAR DOT_PRODUCT, File = dot-product.F90, Line = 12
+  A loop starting at line 12 was unrolled 2 times.
+ftn-6204 ftn: VECTOR DOT_PRODUCT, File = dot-product.F90, Line = 12
+  A loop starting at line 12 was vectorized.
+
+!$omp target data map(to:vecA,vecB)
+ftn-6413 ftn: ACCEL DOT_PRODUCT, File = dot-product.F90, Line = 19
+  A data region was created at line 19 and ending at line 25.
+ftn-6418 ftn: ACCEL DOT_PRODUCT, File = dot-product.F90, Line = 19
+  If not already present: allocate memory and copy user shaped variable "vecb" to accelerator, free at line 25 (acc_copyin).
+ftn-6418 ftn: ACCEL DOT_PRODUCT, File = dot-product.F90, Line = 19
+  If not already present: allocate memory and copy user shaped variable "veca" to accelerator, free at line 25 (acc_copyin).
+
+!$omp target teams distribute simd reduction(+:res)
+ftn-6405 ftn: ACCEL DOT_PRODUCT, File = dot-product.F90, Line = 20
+  A region starting at line 20 and ending at line 24 was placed on the accelerator.
+ftn-6823 ftn: THREAD DOT_PRODUCT, File = dot-product.F90, Line = 20
+  A region starting at line 20 and ending at line 24 was multi-threaded.
+ftn-6416 ftn: ACCEL DOT_PRODUCT, File = dot-product.F90, Line = 20
+  If not already present: allocate memory and copy variable "res" to accelerator, copy back at line 24 (acc_copy).
+ftn-6418 ftn: ACCEL DOT_PRODUCT, File = dot-product.F90, Line = 20
+  If not already present: allocate memory and copy whole array "vecb" to accelerator, free at line 24 (acc_copyin).
+ftn-6418 ftn: ACCEL DOT_PRODUCT, File = dot-product.F90, Line = 20
+  If not already present: allocate memory and copy whole array "veca" to accelerator, free at line 24 (acc_copyin).
+ftn-6823 ftn: THREAD DOT_PRODUCT, File = dot-product.F90, Line = 20
+  A region starting at line 20 and ending at line 24 was multi-threaded.
+
+  do i = 1, nx
+ftn-6005 ftn: SCALAR DOT_PRODUCT, File = dot-product.F90, Line = 21
+  A loop starting at line 21 was unrolled 4 times.
+ftn-6430 ftn: ACCEL DOT_PRODUCT, File = dot-product.F90, Line = 21
+  A loop starting at line 21 was partitioned across the threadblocks and the 256 threads within a threadblock.
+
+Cray Fortran : Version 15.0.1 (20230120205242_66f7391d6a03cf932f321b9f6b1d8612ef5f362c)
+Cray Fortran : Sun Jul 02, 2023  14:43:52
+Cray Fortran : Compile time:  0.2407 seconds
+Cray Fortran : 32 source lines
+Cray Fortran : 0 errors, 0 warnings, 13 other messages, 0 ansi
+#+end_src
+
+*** Version 2
+Without explicit data region
+#+begin_src f90 :eval never
+!$omp target teams distribute simd map(to:vecA,vecB) reduction(+:res)
+  do i = 1, nx
+     res = res + vecA(i) * vecB(i)
+  end do
+!$omp end target teams distribute simd
+#+end_src
+Cannot add ~data~ anywhere here, will cause invalid OpenMP compound directive error.
+
+Diagnostics
+#+begin_src
+  do i = 1, nx
+ftn-6005 ftn: SCALAR DOT_PRODUCT, File = dot-product.F90, Line = 12
+  A loop starting at line 12 was unrolled 2 times.
+ftn-6204 ftn: VECTOR DOT_PRODUCT, File = dot-product.F90, Line = 12
+  A loop starting at line 12 was vectorized.
+
+!$omp target teams distribute simd map(to:vecA,vecB) reduction(+:res)
+ftn-6405 ftn: ACCEL DOT_PRODUCT, File = dot-product.F90, Line = 19
+  A region starting at line 19 and ending at line 23 was placed on the accelerator.
+ftn-6823 ftn: THREAD DOT_PRODUCT, File = dot-product.F90, Line = 19
+  A region starting at line 19 and ending at line 23 was multi-threaded.
+ftn-6416 ftn: ACCEL DOT_PRODUCT, File = dot-product.F90, Line = 19
+  If not already present: allocate memory and copy variable "res" to accelerator, copy back at line 23 (acc_copy).
+ftn-6418 ftn: ACCEL DOT_PRODUCT, File = dot-product.F90, Line = 19
+  If not already present: allocate memory and copy user shaped variable "vecb" to accelerator, free at line 23 (acc_copyin).
+ftn-6418 ftn: ACCEL DOT_PRODUCT, File = dot-product.F90, Line = 19
+  If not already present: allocate memory and copy user shaped variable "veca" to accelerator, free at line 23 (acc_copyin).
+ftn-6823 ftn: THREAD DOT_PRODUCT, File = dot-product.F90, Line = 19
+  A region starting at line 19 and ending at line 23 was multi-threaded.
+
+  do i = 1, nx
+ftn-6005 ftn: SCALAR DOT_PRODUCT, File = dot-product.F90, Line = 20
+  A loop starting at line 20 was unrolled 4 times.
+ftn-6430 ftn: ACCEL DOT_PRODUCT, File = dot-product.F90, Line = 20
+  A loop starting at line 20 was partitioned across the threadblocks and the 256 threads within a threadblock.
+
+Cray Fortran : Version 15.0.1 (20230120205242_66f7391d6a03cf932f321b9f6b1d8612ef5f362c)
+Cray Fortran : Sun Jul 02, 2023  14:46:57
+Cray Fortran : Compile time:  0.2258 seconds
+Cray Fortran : 30 source lines
+Cray Fortran : 0 errors, 0 warnings, 10 other messages, 0 ansi
+#+end_src
+** Exercise: sum-dot
+My version
+#+begin_src f90 :eval never
+!$omp target data map(tofrom:vecC) map(to:vecA, vecB)
+!$omp target teams distribute simd
+do i = 1, nx
+   vecC(i) = vecA(i) + vecB(i)
+end do
+!$omp end target teams distribute simd
+
+res = 0.0
+
+!$omp target teams distribute simd reduction(+:res)
+do i = 1, nx
+   res = res + vecC(i) * vecB(i)
+end do
+!$omp end target teams distribute simd
+!$omp end target data
+#+end_src
+Compared to solution, ~map(tofrom:vecC)~ can be improved as ~map(from:vecC)~,
+since ~vecC~ in host is empty and does not need to be copied to device at first.
+
+** Exercise: heat-equation-simple
+#+begin_src cpp :eval never
+int size = (nx + 2) * (ny + 2);
+#pragma omp target data map(tofrom:prevdata[0:size],currdata[0:size])
+#pragma omp target teams distribute parallel for
+#+end_src
+Passing pointer in data region: ~data map(tofrom:prevdata[0:size])~.
+I made a mistake that I only copy back ~currdata~ but not ~prevdata~.
+Efficiency (seconds), single GPU, running several runs to warm up GPU
+#+begin_src
+10.571 4.913 4.927 4.924 4.930
+#+end_src
+
+** Exercise: heat-equation-unstructured
+Code structure
+#+begin_src cpp :results value code :wrap src :eval never
+enter_data(current, previous);
+// Time evolve
+for (int iter = 1; iter <= nsteps; iter++) {
+    evolve(current, previous, a, dt);
+    if (iter % image_interval == 0) {
+        update_host(current);
+        write_field(current, iter);
+    }
+    std::swap(current, previous);
+}
+exit_data(current, previous);
+#+end_src
+
+#+begin_src
+7.64 1.80 1.80 1.78
+#+end_src
+
+** Exercise: gpu-functions
+Compile error when compiling C
+#+begin_src shell :eval never
+cc -O3 -fopenmp -c my_sum.c -o my_sum.o
+cc -O3 -fopenmp -c sum.c -o sum_c.o
+cc -O3 -fopenmp sum_c.o my_sum.o -o sum_c
+lld: error: undefined symbol: my_sum
+#+end_src
+But it is fine to compile Fortran.
+
+Surround by ~my_sum~ by ~omp declare~ is sufficient.
+#+begin_src cpp :eval never
+#pragma omp declare target
+double my_sum(double a, double b);
+#pragma omp end declare target
+#+end_src
+Both host and device version will be created.
+
+** Exercise: heat-equation-mpi
+#+begin_src cpp :results value code :wrap src :eval never
+#ifdef _OPENMP
+MPI_Comm intranodecomm;
+int nodeRank, nodeProcs, devCount;
+
+MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0,  MPI_INFO_NULL, &intranodecomm);
+MPI_Comm_rank(intranodecomm, &nodeRank);
+MPI_Comm_size(intranodecomm, &nodeProcs);
+
+MPI_Comm_free(&intranodecomm);
+
+devCount = omp_get_num_devices();
+
+if (nodeProcs > devCount) {
+    printf("Not enough GPUs (%d) for all processes (%d) in the node.\n", devCount, nodeProcs);
+    fflush(stdout);
+    MPI_Abort(MPI_COMM_WORLD, -2);
+}
+
+omp_set_default_device(nodeRank);
+#endif
+#+end_src

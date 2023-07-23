@@ -1,0 +1,93 @@
+#+title: Notes of Day 5
+
+* MPI with OpenMP
+Hybrid programming style
+- Fine-grained: add separate ~omp~ directives
+- coarse-grained: OpenMP threads replacing MPI tasks
+
+~MPI_THREAD_MULTIPLE~ requires MPI library to lock some data structure,
+thus increases overhead of MPI call.
+
+~MPI_THREAD_SERIALIZED~: no concurrent MPI calls on all threads
+
+** Thread and process affinity
+The physical core on which a task or thread is on may be switched to another by the OS
+to make load balance, etc.
+This may increase overhead.
+
+~numactl~
+
+#+begin_src shell :eval never
+export OMP_AFFINITY_FORMAT="Process %P thread %0.3n affinity %A"
+export OMP_DISPLAY_AFFINITY=true
+#+end_src
+
+** Exercise: hybrid-hello
+Run with 2 process and 4 OMP threads
+#+begin_src
+Process 125905 thread 000 affinity  9-12
+Process 125905 thread 000 affinity  9
+Rank  1 thread ID  0
+Process 125905 thread 003 affinity  12
+Rank  1 thread ID  3
+Process 125905 thread 001 affinity  10
+Rank  1 thread ID  1
+Process 125905 thread 002 affinity  11
+Rank  1 thread ID  2
+Process 125904 thread 000 affinity  5-8
+Process 125904 thread 000 affinity  5
+Rank  0 thread ID  0
+Process 125904 thread 001 affinity  6
+Rank  0 thread ID  1
+Process 125904 thread 003 affinity  8
+Rank  0 thread ID  3
+Process 125904 thread 002 affinity  7
+Rank  0 thread ID  2
+#+end_src
+
+** Exercise: multiple-thread-communication
+Sendrecv 卡住
+#+begin_src cpp :eval never
+for (int i = 1; i < size; i++)
+    MPI_Sendrecv(&tid, 1, MPI_INT, i, tidtag,
+                 &msg, 1, MPI_INT, 0, tidtag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+#+end_src
+Sendrecv 的 send/recv 是同一个进程的操作，因此任一进程都需要发送 i 和接收 0 的消
+息，这里存在大量死锁。
+
+练习要求的操作本质上是一个带 tag 的 Bcast.
+
+** Exercise: heat-equation-fine
+#+begin_src cpp :eval never
+#pragma omp parallel
+#ifdef _OPENMP
+#pragma omp single
+    num_threads = omp_get_num_threads();
+#endif
+#+end_src
+* OpenMP tasks
+Fibonacci is not a good example for OpenMP parallelization for recursion
+
+** Exercise: simple-tasks
+#+begin_src cpp :eval never
+#pragma omp parallel private(tid)
+#pragma omp single
+{
+  tid = omp_get_thread_num();
+  printf("Tasks created by %d\n", tid);
+  for (int i = 0; i < 4; i++)
+  {
+    #pragma omp task
+    {
+      tid = omp_get_thread_num();
+      printf("Task %d executed by thread %d\n", i, tid);
+      array[i] += tid;
+    }
+  }
+}
+#+end_src
+
+对 OpenMP task 的理解: 任务由一个线程产生，再分发给其他线程。
+在上面的例子里，single 指令确保代码块只由一个线程 (例如 0) 进入，但在进入 task
+块后该线程会分发任务给其他线程。换句话说，其他线程只是帮助完成该线程执行代码中被
+划分为 task 的工作。

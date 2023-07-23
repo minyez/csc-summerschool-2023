@@ -1,0 +1,117 @@
+#+title: Notes of Day 8
+
+* HIPFort
+~c_loc~
+
+* Multi-GPU
+CUDA MPS is very efficient in the case of multiple MPI processes with one GPU
+
+For streams defined on different devices:
+It depends on the implementation whether one has to set device to the same one
+as associated with stream, or one send stream commands to it regardless what the
+current device is.
+
+Answer in the end was that (provided by Miro):
+- HIP: Current device does not matter.
+  Device is selected based on device associated with strea
+- CUDA: Current device has to be set to the same one as associated with CUDA.
+  A kernel launch will fail if it is issued to a stream that is not associated
+  to the current device.
+
+CUDA threads are arranged in column-major. Thus in
+#+begin_src cpp :results value code :wrap src :eval never
+int i = blockIdx.x * blockDim.x + threadIdx.x;
+int j = blockIdx.y * blockDim.y + threadIdx.y;
+int k = blockIdx.z * blockDim.z + threadIdx.z;
+#+end_src
+~i~ goes the fastest, thus adjacent threads access adjacent ~i~.
+
+** Exercise: vector-sum
+Issue to timing.
+
+** Exercise: ping-pong
+Important: In by GPU-aware MPI communication, attention to synchronize after direct GPU-GPU communication is required.
+在调用 kernel 后通过 ~MPI_Send~ 发送数据，如果没有先 ~hipStreamSynchronize~, 由于 kernel 操作是异步的，很有可能会发送没有经过 kernel 处理的数据。
+
+** Exercise: p2p-copy
+*** HIP version
+#+begin_src cpp :results value code :wrap src :eval never
+// Enable peer access
+hipDeviceEnablePeerAccess(int peerDevice, unsigned int flags);
+// Method 1: explicit peer memcpy
+hipMemcpyPeer(void *dst,
+              int dstDeviceId,
+              const void *src,
+              int srcDeviceId,
+              size_t sizeBytes);
+// copy dA_1 on device 1 to dA_0 on device 0
+hipMemcpyPeer(dA_0, gpu0, dA_1, gpu1, N * sizeof(int));
+// Method 2: normal memcpy with implicitly locating device pointers
+hipMemcpy(dA_0, dA_1, N * sizeof(int), hipMemcpyDefault);
+#+end_src
+
+In the exercise, there is one instruction to synchronize
+
+no need to synchronize in this case, as hipMemcpy is blocking
+In general case, it is either not needed to synchronize both src and dst.
+Sync on all devices is safe to do, but introduce unnecessary overhead.
+
+*** OpenMP version
+#+begin_src cpp :results value code :wrap src :eval never
+int omp_target_memcpy(void* dst,
+                      void* src,
+                      size_t length,
+                      size_t dst_offset,
+                      size_t src_offset,
+                      int dst_device_num,
+                      int src_device_num);
+void* omp_target_alloc(size_t size, int device_num);
+void omp_target_free(void* device_ptr, int device_num);
+#+end_src
+
+** Exercise: heat-equation
+HIP.
+
+* Application Performance
+Measurement should be carried out on the target platform.
+"Toy" run on laptop is in most cases useless
+
+** TAU profiling
+#+begin_src shell :eval never
+unset TAU_TRACE
+tau_exec -ebs ./a.out
+paraprof # GUI
+pprof # TUI
+#+end_src
+tracing
+#+begin_src shell :eval never
+export TAU_TRACE=1
+tau_exec -ebs ./a.out
+tau_treemerge.pl
+tau_trace2json tau.trc tau.edf -chrome -ignoreatomic
+#+end_src
+
+#+begin_src shell :eval never
+-g -fno-inline-functions -gdwarf-4
+
+#+end_src
+
+** Roofline analysis
+- under diagonal line: memory-access bound
+- under horizontal line: computation bound
+
+** Omniperf
+#+begin_src shell :eval never
+omniperf profile -n workload_xy --roof-only --kernel-names -- ./a.out
+#+end_src
+
+** Demo: Mandelbrot
+Raw version
+| nprocs | time[s] | speedup | para eff |
+|--------+---------+---------+----------|
+|      1 |   0.395 |   1.000 |    1.000 |
+|      2 |   0.208 |   1.899 |    0.950 |
+|      4 |   0.147 |   2.687 |    0.672 |
+|      8 |   0.083 |   4.759 |    0.595 |
+|     16 |   0.058 |   6.810 |    0.426 |
+#+tblfm: $3=@2$2/$2;%.3f::$4=@2$2/$2/$1;%.3f
